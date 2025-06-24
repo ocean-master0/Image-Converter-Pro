@@ -22,5 +22,5 @@ gunicorn==21.2.0
 # Environment Variables
 python-dotenv==1.0.0
 
-# Security
+# Security (optional)
 cryptography==41.0.8
