@@ -169,7 +169,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## 👨‍💻 Author
 
 **Your Name**
-- GitHub: [@yourusername](https://github.com/ocean-master0)
+- GitHub: [ocean-master0](https://github.com/ocean-master0)
 
 
 ## 🙏 Acknowledgments
