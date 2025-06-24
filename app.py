@@ -1,23 +1,25 @@
-from flask import Flask, render_template, request, send_file, flash, redirect, url_for, jsonify
-from werkzeug.utils import secure_filename
-from PIL import Image
 import os
 import io
 import base64
 import uuid
+import time
+import threading
+import tempfile
+from datetime import datetime
+
+from flask import Flask, render_template, request, send_file, jsonify
+from werkzeug.utils import secure_filename
+from PIL import Image
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter
 from docx import Document
 from docx.shared import Inches
 import svgwrite
-import tempfile
-import shutil
-import time
-import threading
-from datetime import datetime
 
 app = Flask(__name__)
-app.secret_key = 'your-secret-key-here-change-in-production'
+
+# Production configuration
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'your-secret-key-here-change-in-production')
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['OUTPUT_FOLDER'] = 'outputs'
@@ -34,7 +36,7 @@ def create_directories():
         app.config['UPLOAD_FOLDER'] = upload_path
         app.config['OUTPUT_FOLDER'] = output_path
         
-        print(f"Directories created:")
+        print(f"Directories created successfully:")
         print(f"  Upload: {upload_path}")
         print(f"  Output: {output_path}")
         
@@ -50,6 +52,7 @@ def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 def cleanup_old_files():
+    """Cleanup files older than 1 hour automatically"""
     try:
         current_time = time.time()
         deleted_count = 0
@@ -60,7 +63,7 @@ def cleanup_old_files():
                     file_path = os.path.join(folder, filename)
                     if os.path.isfile(file_path):
                         try:
-                            if current_time - os.path.getctime(file_path) > 3600:
+                            if current_time - os.path.getctime(file_path) > 3600:  # 1 hour
                                 os.remove(file_path)
                                 deleted_count += 1
                         except Exception as e:
@@ -73,11 +76,13 @@ def cleanup_old_files():
         print(f"Error in cleanup: {e}")
 
 def schedule_cleanup():
+    """Schedule periodic cleanup"""
     cleanup_old_files()
-    timer = threading.Timer(1800, schedule_cleanup)
+    timer = threading.Timer(1800, schedule_cleanup)  # 30 minutes
     timer.daemon = True
     timer.start()
 
+# Start cleanup scheduler
 schedule_cleanup()
 
 class ImageConverter:
@@ -125,7 +130,7 @@ class ImageConverter:
             raise Exception(f"SVG conversion failed: {str(e)}")
 
     def convert_to_pdf(self, save_path):
-        """Fixed PDF conversion method"""
+        """Fixed PDF conversion method for Render deployment"""
         try:
             # Convert image to RGB if needed
             if self.image.mode != 'RGB':
@@ -216,12 +221,15 @@ def upload_file():
             return jsonify({'error': 'No file selected'}), 400
 
         if file and allowed_file(file.filename):
+            # Generate unique filename
             filename = str(uuid.uuid4()) + '.' + file.filename.rsplit('.', 1)[1].lower()
             filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
             
+            # Ensure directory exists before saving
             os.makedirs(os.path.dirname(filepath), exist_ok=True)
             file.save(filepath)
 
+            # Get image info
             try:
                 with Image.open(filepath) as img:
                     image_info = {
@@ -234,6 +242,7 @@ def upload_file():
                     }
                 return jsonify(image_info)
             except Exception as e:
+                # Clean up failed upload
                 if os.path.exists(filepath):
                     try:
                         os.remove(filepath)
@@ -262,10 +271,13 @@ def convert_image():
 
         try:
             converter = ImageConverter(input_path)
+            
+            # Generate output filename
             base_name = filename.rsplit('.', 1)[0]
             output_filename = f"{base_name}.{format_type.lower()}"
             output_path = os.path.join(app.config['OUTPUT_FOLDER'], output_filename)
 
+            # Convert based on format
             format_upper = format_type.upper()
             if format_upper in ['JPG', 'JPEG']:
                 converter.convert_to_image(output_path, 'JPEG')
@@ -280,6 +292,7 @@ def convert_image():
             else:
                 return jsonify({'error': 'Unsupported format'}), 400
 
+            # Verify output file was created
             if not os.path.exists(output_path):
                 return jsonify({'error': 'Conversion failed - output file not created'}), 500
 
@@ -299,12 +312,14 @@ def convert_image():
 @app.route('/download/<filename>')
 def download_file(filename):
     try:
+        # Sanitize filename
         filename = secure_filename(filename)
         file_path = os.path.join(app.config['OUTPUT_FOLDER'], filename)
         
         if os.path.exists(file_path):
+            # Schedule file deletion after download
             def delete_after_delay():
-                time.sleep(5)
+                time.sleep(5)  # Wait 5 seconds after download
                 try:
                     if os.path.exists(file_path):
                         os.remove(file_path)
@@ -320,69 +335,25 @@ def download_file(filename):
     except Exception as e:
         return jsonify({'error': f'Download failed: {str(e)}'}), 500
 
-@app.route('/clear-all', methods=['POST'])
-def clear_all_data():
-    try:
-        deleted_files = 0
-        errors = []
-        
-        for folder in [app.config['UPLOAD_FOLDER'], app.config['OUTPUT_FOLDER']]:
-            if os.path.exists(folder):
-                for filename in os.listdir(folder):
-                    file_path = os.path.join(folder, filename)
-                    if os.path.isfile(file_path):
-                        try:
-                            os.remove(file_path)
-                            deleted_files += 1
-                        except Exception as e:
-                            errors.append(f"Failed to delete {filename}: {str(e)}")
-        
-        response = {
-            'success': True,
-            'message': f'Successfully cleared {deleted_files} files'
-        }
-        
-        if errors:
-            response['warnings'] = errors
-        
-        return jsonify(response)
-        
-    except Exception as e:
-        return jsonify({'error': f'Clear operation failed: {str(e)}'}), 500
-
 @app.route('/cleanup')
-def manual_cleanup():
+def cleanup_files():
+    """Manual cleanup endpoint"""
     try:
         cleanup_old_files()
-        return jsonify({'message': 'Manual cleanup completed successfully'})
+        return jsonify({'message': 'Cleanup completed successfully'})
     except Exception as e:
         return jsonify({'error': f'Cleanup failed: {str(e)}'}), 500
 
-@app.route('/status')
-def status():
-    try:
-        upload_count = len([f for f in os.listdir(app.config['UPLOAD_FOLDER']) if os.path.isfile(os.path.join(app.config['UPLOAD_FOLDER'], f))]) if os.path.exists(app.config['UPLOAD_FOLDER']) else 0
-        output_count = len([f for f in os.listdir(app.config['OUTPUT_FOLDER']) if os.path.isfile(os.path.join(app.config['OUTPUT_FOLDER'], f))]) if os.path.exists(app.config['OUTPUT_FOLDER']) else 0
-        
-        return jsonify({
-            'status': 'healthy',
-            'upload_folder': app.config['UPLOAD_FOLDER'],
-            'output_folder': app.config['OUTPUT_FOLDER'],
-            'uploaded_files': upload_count,
-            'output_files': output_count,
-            'supported_formats': list(ALLOWED_EXTENSIONS),
-            'max_file_size': app.config['MAX_CONTENT_LENGTH']
-        })
-    except Exception as e:
-        return jsonify({'error': f'Status check failed: {str(e)}'}), 500
+@app.route('/health')
+def health_check():
+    """Health check endpoint for Render"""
+    return jsonify({
+        'status': 'healthy',
+        'timestamp': datetime.now().isoformat(),
+        'python_version': os.sys.version
+    })
 
 if __name__ == '__main__':
-    print("Starting Image Converter Pro...")
-    print(f"Upload folder: {app.config['UPLOAD_FOLDER']}")
-    print(f"Output folder: {app.config['OUTPUT_FOLDER']}")
-    print("Server starting on http://0.0.0.0:5000")
-    
-    try:
-        app.run(debug=True, host='0.0.0.0', port=5000)
-    except Exception as e:
-        print(f"Failed to start server: {e}")
+    port = int(os.environ.get('PORT', 5000))
+    debug = os.environ.get('FLASK_ENV') == 'development'
+    app.run(debug=debug, host='0.0.0.0', port=port)

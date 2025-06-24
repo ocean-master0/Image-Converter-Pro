@@ -1,13 +1,17 @@
+# Build tools - Must be installed first
+setuptools==69.5.1
+wheel==0.42.0
+
 # Web Framework
 Flask==3.0.0
 Werkzeug==3.0.1
 
-# Image Processing
-Pillow==10.0.1
+# Image Processing - Python 3.11 compatible
+Pillow==10.1.0
 
 # Document Generation
-reportlab==4.0.4
-python-docx==0.8.11
+reportlab==4.0.9
+python-docx==1.1.0
 
 # Vector Graphics
 svgwrite==1.4.3
@@ -19,4 +23,4 @@ gunicorn==21.2.0
 python-dotenv==1.0.0
 
 # Security
-cryptography==41.0.7
+cryptography==41.0.8
